@@ -1,0 +1,17 @@
+flash_package:
+  name: "OnePlus 5/5T Kernel (GCC11, F2FS, Swappiness=200)"
+  version: "1.0.0"
+  device: "OnePlus 5 / 5T (msm8998)"
+  description: "Custom kernel with forced swappiness=200 (sysctl source patch) and F2FS support."
+  file: "AnyKernel3-oneplus5-swappiness200.zip"
+  checksum:
+    md5: "GENERATE_YOUR_MD5_HASH_HERE"
+  flash_instructions:
+    - "Reboot to TWRP Recovery"
+    - "Flash AnyKernel3-oneplus5-swappiness200.zip"
+    - "Reboot to System"
+  kernel_details:
+    base: "kernel_oneplus_msm8998 (r11.1)"
+    toolchain: "GCC 11"
+    swappiness_limit_patched: true
+    f2fs_enabled: true

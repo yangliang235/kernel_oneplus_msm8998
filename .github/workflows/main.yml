@@ -1,14 +1,14 @@
-name: Build OP5 Recovery Flashable Zip (GCC 11 + Swappiness 200 + APatch/KPM Ready)
+name: Build OP5 Kernel (r11.1 + GCC 11 + Swappiness 200 + APatch/KPM Ready)
 
 on:
   workflow_dispatch:
   push:
-    branches: [ r11.1 ]
+    branches: [ "r11.1" ] # 针对你的 r11.1 分支触发
 
 env:
   ARCH: arm64
   SUBARCH: arm64
-  DEFCONFIG: lineage_oneplus5_defconfig
+  DEFCONFIG: lineage_oneplus5_defconfig # 使用适合一加5/5T的 LineageOS 配置
 
 jobs:
   build:
@@ -33,6 +33,7 @@ jobs:
             zlib1g-dev python3 cpio device-tree-compiler \
             gcc-11-aarch64-linux-gnu gcc-11-arm-linux-gnueabi
 
+          # 规范设置 GCC 11 优先级
           sudo update-alternatives --install /usr/bin/aarch64-linux-gnu-gcc aarch64-linux-gnu-gcc /usr/bin/aarch64-linux-gnu-gcc-11 100
           sudo update-alternatives --install /usr/bin/arm-linux-gnueabi-gcc arm-linux-gnueabi-gcc /usr/bin/arm-linux-gnueabi-gcc-11 100
 
@@ -67,7 +68,7 @@ jobs:
                CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
                $DEFCONFIG
 
-          # 启用 APatch 及 KPM 模块运行所需的关键内核配置，保持作者原配置不变
+          # 启用 APatch 及 KPM 模块运行所需的关键内核配置
           ./scripts/config --file out/.config \
             -e KALLSYMS -e KALLSYMS_ALL -e KPROBES -e KPROBE_EVENTS \
             -d MODULE_SIG -d MODULE_SIG_FORCE
@@ -89,16 +90,22 @@ jobs:
           make -j"$(nproc)" O=out ARCH=$ARCH \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            Image Image.gz dtbs
+            Image.gz-dtb
 
       - name: Pack Recovery Flashable Zip (AnyKernel3)
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git anykernel
-          cp out/arch/arm64/boot/Image.gz anykernel/
-          cp out/arch/arm64/boot/dtbs/*.dtb anykernel/ 2>/dev/null || true
+          
+          # r11.1 分支默认开启 CONFIG_IMG_GZ_DTB，产物是合并的 Image.gz-dtb
+          if [ -f "out/arch/arm64/boot/Image.gz-dtb" ]; then
+            cp out/arch/arm64/boot/Image.gz-dtb anykernel/
+          else
+            echo "::error::未找到 Image.gz-dtb，请检查编译日志"
+            exit 1
+          fi
           
           cd anykernel
-          sed -i 's/^kernel.string=.*/kernel.string=blu_spark-Swappiness200-APatchReady/' anykernel.sh
+          sed -i 's/^kernel.string=.*/kernel.string=OP5-r11.1-Swappiness200-APatchReady/' anykernel.sh
           sed -i 's/^device.name1=.*/device.name1=cheeseburger/' anykernel.sh
           sed -i 's/^device.name2=.*/device.name2=dumpling/' anykernel.sh
           sed -i 's/^device.name3=.*/device.name3=/' anykernel.sh
@@ -110,11 +117,11 @@ jobs:
           sed -i 's/^do.devicecheck=.*/do.devicecheck=0/' anykernel.sh
           
           # 生成可直接在 Recovery 刷入的 zip 包
-          zip -r "../op5-flashable-kernel-$(date +%Y%m%d-%H%M).zip" . -x '*.git*'
+          zip -r "../op5-r11.1-kernel-$(date +%Y%m%d-%H%M).zip" . -x '*.git*'
 
       - name: Upload Flashable Zip Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: op5-recovery-flashable-zip
-          path: op5-flashable-kernel-*.zip
+          name: op5-r11.1-flashable-zip
+          path: op5-r11.1-kernel-*.zip
           if-no-files-found: error

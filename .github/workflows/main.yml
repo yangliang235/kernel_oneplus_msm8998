@@ -1,17 +1,91 @@
-flash_package:
-  name: "OnePlus 5/5T Kernel (GCC11, F2FS, Swappiness=200)"
-  version: "1.0.0"
-  device: "OnePlus 5 / 5T (msm8998)"
-  description: "Custom kernel with forced swappiness=200 (sysctl source patch) and F2FS support."
-  file: "AnyKernel3-oneplus5-swappiness200.zip"
-  checksum:
-    md5: "GENERATE_YOUR_MD5_HASH_HERE"
-  flash_instructions:
-    - "Reboot to TWRP Recovery"
-    - "Flash AnyKernel3-oneplus5-swappiness200.zip"
-    - "Reboot to System"
-  kernel_details:
-    base: "kernel_oneplus_msm8998 (r11.1)"
-    toolchain: "GCC 11"
-    swappiness_limit_patched: true
-    f2fs_enabled: true
+name: Build OnePlus 5 Kernel (GCC11, F2FS, Swappiness=200)
+
+on:
+  push:
+    branches: [ "r11.1" ] # 当推送到 r11.1 分支时触发
+  pull_request:
+    branches: [ "r11.1" ]
+  workflow_dispatch:      # 允许在 Actions 页面手动点击运行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Kernel Source
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 1
+
+    - name: Install Dependencies & GCC 11 Toolchain
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev zip curl git
+        # 安装 aarch64 的 GCC 11 交叉编译器
+        sudo apt-get install -y gcc-11-aarch64-linux-gnu binutils-aarch64-linux-gnu
+        # 将 gcc-11 加入环境变量并创建软链接 (有些老内核构建脚本认不到 gcc-11 后缀)
+        sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc-11 /usr/bin/aarch64-linux-gnu-gcc
+
+    - name: Patch Kernel Source (swappiness=200)
+      run: |
+        echo "=== 1. 修改 MAX_SWAPPINESS 宏 (突破逻辑限制) ==="
+        # 查找 MAX_SWAPPINESS 定义并替换为 200 (通常在 mm/vmscan.c 中)
+        grep -rl "define MAX_SWAPPINESS 100" . | xargs -r sed -i 's/define MAX_SWAPPINESS 100/define MAX_SWAPPINESS 200/g'
+
+        echo "=== 2. 修改 sysctl.c 允许接口写入 200 ==="
+        # 在 sysctl.c 中增加 two_hundred 变量
+        sed -i 's/static int one_hundred = 100;/static int one_hundred = 100;\nstatic int two_hundred = 200;/g' kernel/sysctl.c
+        # 将 swappiness 的 extra2 上限指向 two_hundred
+        sed -i '/.procname\s*=\s*"swappiness"/,/},/ s/\.extra2\s*=\s*&one_hundred,/.extra2     = \&two_hundred,/g' kernel/sysctl.c
+        
+        echo "验证 sysctl.c 修改是否成功："
+        grep -A 6 'procname.*"swappiness"' kernel/sysctl.c
+
+    - name: Build Kernel
+      run: |
+        export ARCH=arm64
+        export SUBARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        
+        # 使用适合一加5/5T的配置 (如无此配置，则使用 msm-perf_defconfig)
+        if [ -f "arch/arm64/configs/lineage_oneplus5_defconfig" ]; then
+          make lineage_oneplus5_defconfig
+        else
+          make msm-perf_defconfig
+        fi
+        
+        # 开始多线程编译
+        make -j$(nproc) ARCH=arm64 CROSS_COMPILE=${CROSS_COMPILE}
+
+    - name: Package with AnyKernel3
+      run: |
+        # 克隆 AnyKernel3 模板
+        git clone https://github.com/osm0sis/AnyKernel3.git -b master AnyKernel3
+        cd AnyKernel3
+        
+        # 复制编译好的内核镜像
+        cp ../arch/arm64/boot/Image.gz-dtb .
+        
+        # 修改 anykernel.sh 注入 swappiness=200 持久化设置
+        cat << 'EOF' >> anykernel.sh
+
+        ## 自定义设置：强制 swappiness=200 持久化
+        ui_print("Applying swappiness=200 settings...");
+        if [ -f /system/etc/sysctl.conf ]; then
+            echo "vm.swappiness=200" >> /system/etc/sysctl.conf
+        else
+            mkdir -p /system/etc
+            echo "vm.swappiness=200" > /system/etc/sysctl.conf
+        fi
+        echo 200 > /proc/sys/vm/swappiness 2>/dev/null
+        ui_print("Swappiness set to 200 successfully!");
+        EOF
+        
+        # 打包生成 ZIP
+        zip -r9 ../OnePlus5_Kernel_GCC11_F2FS_Swap200.zip * -x .git README.md *placeholder
+
+    - name: Upload Flashable ZIP
+      uses: actions/upload-artifact@v3
+      with:
+        name: OnePlus5_Kernel_Swap200
+        path: OnePlus5_Kernel_GCC11_F2FS_Swap200.zip
